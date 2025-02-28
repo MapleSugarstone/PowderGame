@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Powder Physics Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: Arial, sans-serif;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        h1 {
+            margin-bottom: 10px;
+        }
+        
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        button {
+            padding: 8px 16px;
+            background-color: #444;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #555;
+        }
+        
+        button.active {
+            background-color: #7289da;
+        }
+        
+        button#fire {
+            background-color: #FF5500;
+        }
+        
+        button#fire:hover {
+            background-color: #FF7700;
+        }
+        
+        button#fire.active {
+            background-color: #FF9900;
+        }
+        
+        button#smoke {
+            background-color: #666666;
+        }
+        
+        button#smoke:hover {
+            background-color: #777777;
+        }
+        
+        button#smoke.active {
+            background-color: #888888;
+        }
+        
+        .pen-size {
+            display: flex;
+            align-items: center;
+            margin-left: 15px;
+            color: white;
+        }
+        
+        .pen-size label {
+            margin-right: 10px;
+        }
+        
+        .pen-size input {
+            width: 100px;
+            margin-right: 5px;
+        }
+        
+        canvas {
+            background-color: black;
+            border: 1px solid #333;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <h1>Powder Physics Game</h1>
+    
+    <div class="controls">
+        <button id="sand" class="active">Sand</button>
+        <button id="water">Water</button>
+        <button id="stone">Stone</button>
+        <button id="fire">Fire</button>
+        <button id="smoke">Smoke</button>
+        <button id="eraser">Eraser</button>
+        <button id="clear">Clear All</button>
+        <div class="pen-size">
+            <label for="pen-size">Pen Size:</label>
+            <input type="range" id="pen-size" min="1" max="10" value="2">
+            <span id="pen-size-value">2</span>
+        </div>
+    </div>
+    
+    <canvas id="canvas"></canvas>
+    
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = Math.min(800, window.innerWidth - 40);
+        canvas.height = Math.min(600, window.innerHeight - 150);
+        
+        // Grid settings
+        const cellSize = 4;
+        const cols = Math.floor(canvas.width / cellSize);
+        const rows = Math.floor(canvas.height / cellSize);
+        
+        // Particle types
+        const EMPTY = 0;
+        const SAND = 1;
+        const WATER = 2;
+        const STONE = 3;
+        const ERASER = 4;
+        const FIRE = 5;
+        const SMOKE = 6;
+        
+        // Currently selected particle type
+        let currentType = SAND;
+        let penSize = 2; // Default pen size
+        
+        // Drawing state
+        let isDrawing = false;
+        let lastX = -1;
+        let lastY = -1;
+        let drawInterval = null;
+        
+        // Create the initial grid
+        let grid = Array(cols).fill().map(() => Array(rows).fill(EMPTY));
+        
+        // Create particle lifetime maps
+        let fireLifetimes = {};
+        let smokeLifetimes = {};
+        
+        // Particle properties
+        const particleProps = {
+            [EMPTY]: { color: '#000000' },
+            [SAND]: { color: '#E3B778', movable: true, flammable: true },
+            [WATER]: { color: 'rgba(94, 153, 201, 0.7)', movable: true, flammable: false },
+            [STONE]: { color: '#808080', movable: false, flammable: false },
+            [ERASER]: { color: '#FF4444', movable: false, flammable: false },
+            [FIRE]: { color: '#FF5500', movable: true, flammable: false, lifetime: 60 },
+            [SMOKE]: { color: 'rgba(80, 80, 80, 0.7)', movable: true, flammable: false, lifetime: 120 }
+        };
+        
+        // Set up button controls
+        const buttons = {
+            sand: document.getElementById('sand'),
+            water: document.getElementById('water'),
+            stone: document.getElementById('stone'),
+            fire: document.getElementById('fire'),
+            smoke: document.getElementById('smoke'),
+            eraser: document.getElementById('eraser'),
+            clear: document.getElementById('clear')
+        };
+        
+        // Add click listeners to buttons
+        buttons.sand.addEventListener('click', () => setType(SAND));
+        buttons.water.addEventListener('click', () => setType(WATER));
+        buttons.stone.addEventListener('click', () => setType(STONE));
+        buttons.fire.addEventListener('click', () => setType(FIRE));
+        buttons.smoke.addEventListener('click', () => setType(SMOKE));
+        buttons.eraser.addEventListener('click', () => setType(ERASER));
+        buttons.clear.addEventListener('click', clearGrid);
+        
+        // Set up pen size slider
+        const penSizeSlider = document.getElementById('pen-size');
+        const penSizeValue = document.getElementById('pen-size-value');
+        
+        penSizeSlider.addEventListener('input', () => {
+            penSize = parseInt(penSizeSlider.value);
+            penSizeValue.textContent = penSize;
+        });
+        
+        function setType(type) {
+            currentType = type;
+            
+            // Update button appearance
+            Object.values(buttons).forEach(btn => btn.classList.remove('active'));
+            
+            if (type === SAND) buttons.sand.classList.add('active');
+            else if (type === WATER) buttons.water.classList.add('active');
+            else if (type === STONE) buttons.stone.classList.add('active');
+            else if (type === FIRE) buttons.fire.classList.add('active');
+            else if (type === SMOKE) buttons.smoke.classList.add('active');
+            else if (type === ERASER) buttons.eraser.classList.add('active');
+        }
+        
+        function clearGrid() {
+            grid = Array(cols).fill().map(() => Array(rows).fill(EMPTY));
+            fireLifetimes = {};
+            smokeLifetimes = {};
+        }
+        
+        // Canvas interaction handlers
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseleave', stopDrawing);
+        
+        function startDrawing(e) {
+            isDrawing = true;
+            draw(e);
+            startContinuousDrawing();
+        }
+        
+        function stopDrawing() {
+            isDrawing = false;
+            lastX = -1;
+            lastY = -1;
+            stopContinuousDrawing();
+        }
+        
+        function startContinuousDrawing() {
+            if (drawInterval) {
+                clearInterval(drawInterval);
+            }
+            
+            drawInterval = setInterval(() => {
+                if (isDrawing && lastX >= 0 && lastY >= 0) {
+                    createParticle(lastX, lastY);
+                }
+            }, 50); // Spawn particles every 50ms
+        }
+        
+        function stopContinuousDrawing() {
+            if (drawInterval) {
+                clearInterval(drawInterval);
+                drawInterval = null;
+            }
+        }
+        
+        function draw(e) {
+            if (!isDrawing) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) / cellSize);
+            const y = Math.floor((e.clientY - rect.top) / cellSize);
+            
+            // Check bounds
+            if (x < 0 || x >= cols || y < 0 || y >= rows) return;
+            
+            // Draw line between last position and current position
+            if (lastX !== -1 && lastY !== -1) {
+                const dx = x - lastX;
+                const dy = y - lastY;
+                const steps = Math.max(Math.abs(dx), Math.abs(dy));
+                
+                for (let i = 0; i <= steps; i++) {
+                    const px = Math.floor(lastX + dx * (i / steps));
+                    const py = Math.floor(lastY + dy * (i / steps));
+                    
+                    if (px >= 0 && px < cols && py >= 0 && py < rows) {
+                        createParticle(px, py);
+                    }
+                }
+            } else {
+                createParticle(x, y);
+            }
+            
+            lastX = x;
+            lastY = y;
+        }
+        
+        function createParticle(x, y) {
+            // Apply pen size
+            for (let dx = -Math.floor(penSize/2); dx <= Math.floor(penSize/2); dx++) {
+                for (let dy = -Math.floor(penSize/2); dy <= Math.floor(penSize/2); dy++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    
+                    // Check bounds
+                    if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+                    
+                    if (currentType === ERASER) {
+                        grid[nx][ny] = EMPTY;
+                        delete fireLifetimes[`${nx},${ny}`];
+                        delete smokeLifetimes[`${nx},${ny}`];
+                    } else {
+                        grid[nx][ny] = currentType;
+                        
+                        // Initialize fire lifetime if needed
+                        if (currentType === FIRE) {
+                            fireLifetimes[`${nx},${ny}`] = particleProps[FIRE].lifetime;
+                        }
+                        
+                        // Initialize smoke lifetime if needed
+                        if (currentType === SMOKE) {
+                            smokeLifetimes[`${nx},${ny}`] = particleProps[SMOKE].lifetime;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Physics update function
+        function updatePhysics() {
+            // Create a copy of the grid for the next state
+            const newGrid = Array(cols).fill().map(() => Array(rows).fill(EMPTY));
+            
+            // First, copy immovable particles
+            for (let x = 0; x < cols; x++) {
+                for (let y = 0; y < rows; y++) {
+                    const type = grid[x][y];
+                    if (type !== EMPTY && !particleProps[type].movable) {
+                        newGrid[x][y] = type;
+                    }
+                }
+            }
+            
+            // Process movable particles from bottom to top
+            for (let y = rows - 1; y >= 0; y--) {
+                for (let x = 0; x < cols; x++) {
+                    const type = grid[x][y];
+                    
+                    // Skip empty and immovable particles
+                    if (type === EMPTY || !particleProps[type].movable) continue;
+                    
+                    // Handle fire special case
+                    if (type === FIRE) {
+                        const key = `${x},${y}`;
+                        
+                        // Decrement fire lifetime
+                        if (fireLifetimes[key]) {
+                            // Make fire fade faster
+                            fireLifetimes[key] -= 2; // Decrease faster
+                            
+                            // Fire burns out
+                            if (fireLifetimes[key] <= 0) {
+                                delete fireLifetimes[key];
+                                continue; // Don't copy to new grid
+                            }
+                        }
+                        
+                        // Chance to create smoke above
+                        if (Math.random() < 0.3 && y > 0 && newGrid[x][y-1] === EMPTY) {
+                            newGrid[x][y-1] = SMOKE;
+                            smokeLifetimes[`${x},${y-1}`] = particleProps[SMOKE].lifetime;
+                        }
+                        
+                        // Fire can spread to flammable neighbors
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dx = -1; dx <= 1; dx++) {
+                                if (dx === 0 && dy === 0) continue;
+                                
+                                const nx = x + dx;
+                                const ny = y + dy;
+                                
+                                if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+                                    const neighborType = grid[nx][ny];
+                                    if (neighborType !== EMPTY && particleProps[neighborType].flammable) {
+                                        if (Math.random() < 0.05) {
+                                            newGrid[nx][ny] = FIRE;
+                                            fireLifetimes[`${nx},${ny}`] = particleProps[FIRE].lifetime;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Fire rises upward sometimes
+                        if (y > 0 && grid[x][y-1] === EMPTY && Math.random() < 0.8) {
+                            newGrid[x][y-1] = FIRE;
+                            fireLifetimes[`${x},${y-1}`] = fireLifetimes[key];
+                        } else {
+                            newGrid[x][y] = FIRE;
+                        }
+                        
+                        continue;
+                    }
+                    
+                    // Handle smoke - rises upward
+                    if (type === SMOKE) {
+                        const key = `${x},${y}`;
+                        
+                        // Decrement smoke lifetime
+                        if (smokeLifetimes[key]) {
+                            smokeLifetimes[key]--;
+                            
+                            // Smoke dissipates
+                            if (smokeLifetimes[key] <= 0) {
+                                delete smokeLifetimes[key];
+                                continue; // Don't copy to new grid
+                            }
+                        }
+                        
+                        // Smoke rises upward
+                        if (y > 0 && newGrid[x][y-1] === EMPTY && grid[x][y-1] === EMPTY) {
+                            newGrid[x][y-1] = SMOKE;
+                            smokeLifetimes[`${x},${y-1}`] = smokeLifetimes[key];
+                            delete smokeLifetimes[key];
+                        } 
+                        // Try spreading horizontally at the top
+                        else {
+                            let moved = false;
+                            
+                            // Try left and right randomly
+                            const goLeft = Math.random() < 0.5;
+                            
+                            if (goLeft && x > 0 && newGrid[x-1][y] === EMPTY && grid[x-1][y] === EMPTY) {
+                                newGrid[x-1][y] = SMOKE;
+                                smokeLifetimes[`${x-1},${y}`] = smokeLifetimes[key];
+                                delete smokeLifetimes[key];
+                                moved = true;
+                            } else if (!goLeft && x < cols - 1 && newGrid[x+1][y] === EMPTY && grid[x+1][y] === EMPTY) {
+                                newGrid[x+1][y] = SMOKE;
+                                smokeLifetimes[`${x+1},${y}`] = smokeLifetimes[key];
+                                delete smokeLifetimes[key];
+                                moved = true;
+                            }
+                            
+                            if (!moved) {
+                                newGrid[x][y] = SMOKE;
+                            }
+                        }
+                        
+                        continue;
+                    }
+                    
+                    // Handle sand
+                    if (type === SAND) {
+                        // Check if sand is near fire
+                        let nearFire = false;
+                        for (let dy = -1; dy <= 1 && !nearFire; dy++) {
+                            for (let dx = -1; dx <= 1 && !nearFire; dx++) {
+                                if (dx === 0 && dy === 0) continue;
+                                
+                                const nx = x + dx;
+                                const ny = y + dy;
+                                
+                                if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+                                    if (grid[nx][ny] === FIRE) {
+                                        nearFire = true;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (nearFire && Math.random() < 0.1) {
+                            // Sand catches fire
+                            newGrid[x][y] = FIRE;
+                            fireLifetimes[`${x},${y}`] = particleProps[FIRE].lifetime;
+                            continue;
+                        }
+                        
+                        // Sand falls down
+                        if (y < rows - 1 && newGrid[x][y+1] === EMPTY && grid[x][y+1] === EMPTY) {
+                            newGrid[x][y+1] = SAND;
+                        } 
+                        // Try falling diagonally
+                        else if (y < rows - 1) {
+                            const left = Math.random() < 0.5;
+                            const right = !left;
+                            
+                            if (left && x > 0 && newGrid[x-1][y+1] === EMPTY && grid[x-1][y+1] === EMPTY) {
+                                newGrid[x-1][y+1] = SAND;
+                            } else if (right && x < cols - 1 && newGrid[x+1][y+1] === EMPTY && grid[x+1][y+1] === EMPTY) {
+                                newGrid[x+1][y+1] = SAND;
+                            } else {
+                                newGrid[x][y] = SAND;
+                            }
+                        } else {
+                            newGrid[x][y] = SAND;
+                        }
+                    }
+                    
+                    // Handle water
+                    else if (type === WATER) {
+                        // Water puts out fire
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dx = -1; dx <= 1; dx++) {
+                                if (dx === 0 && dy === 0) continue;
+                                
+                                const nx = x + dx;
+                                const ny = y + dy;
+                                
+                                if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+                                    if (grid[nx][ny] === FIRE) {
+                                        newGrid[nx][ny] = EMPTY; // Extinguish fire
+                                        delete fireLifetimes[`${nx},${ny}`];
+                                        
+                                        // Create steam (smoke)
+                                        if (Math.random() < 0.5) {
+                                            newGrid[nx][ny] = SMOKE;
+                                            smokeLifetimes[`${nx},${ny}`] = particleProps[SMOKE].lifetime;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Water falls down
+                        if (y < rows - 1 && newGrid[x][y+1] === EMPTY && grid[x][y+1] === EMPTY) {
+                            newGrid[x][y+1] = WATER;
+                        }
+                        // Try spreading horizontally
+                        else {
+                            let moved = false;
+                            
+                            // Try left and right randomly
+                            const goLeft = Math.random() < 0.5;
+                            
+                            if (goLeft && x > 0 && newGrid[x-1][y] === EMPTY && grid[x-1][y] === EMPTY) {
+                                newGrid[x-1][y] = WATER;
+                                moved = true;
+                            } else if (!goLeft && x < cols - 1 && newGrid[x+1][y] === EMPTY && grid[x+1][y] === EMPTY) {
+                                newGrid[x+1][y] = WATER;
+                                moved = true;
+                            }
+                            
+                            if (!moved) {
+                                newGrid[x][y] = WATER;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Update the grid
+            grid = newGrid;
+        }
+        
+        // Render function
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            for (let x = 0; x < cols; x++) {
+                for (let y = 0; y < rows; y++) {
+                    const type = grid[x][y];
+                    if (type === EMPTY) continue;
+                    
+                    // Set color
+                    ctx.fillStyle = particleProps[type].color;
+                    
+                    // Special case for fire: make it glow based on remaining lifetime
+                    if (type === FIRE) {
+                        const key = `${x},${y}`;
+                        const lifetime = fireLifetimes[key] || 0;
+                        const brightness = Math.floor(255 * (lifetime / particleProps[FIRE].lifetime));
+                        ctx.fillStyle = `rgb(255, ${brightness}, 0)`;
+                    }
+                    // Special case for smoke: adjust opacity based on lifetime
+                    else if (type === SMOKE) {
+                        const key = `${x},${y}`;
+                        const lifetime = smokeLifetimes[key] || 0;
+                        const opacity = Math.max(0.1, lifetime / particleProps[SMOKE].lifetime);
+                        ctx.fillStyle = `rgba(80, 80, 80, ${opacity})`;
+                    }
+                    
+                    ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            updatePhysics();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>
